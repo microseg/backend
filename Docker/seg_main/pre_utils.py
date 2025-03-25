@@ -1,4 +1,8 @@
 import cv2
+import logging
+import traceback
+
+logger = logging.getLogger()
 
 class ImagePreprocessor:
     """
@@ -33,11 +37,16 @@ class ImagePreprocessor:
             bilateral_sigma_color (float): Filter sigma in color space (default: 40)
             bilateral_sigma_space (float): Filter sigma in coordinate space (default: 40)
         """
-        self.denoise_method = denoise_method
-        self.max_eq_pixels = max_eq_pixels
-        self.bilateral_d = bilateral_d
-        self.bilateral_sigma_color = bilateral_sigma_color
-        self.bilateral_sigma_space = bilateral_sigma_space
+        try:
+            self.denoise_method = denoise_method
+            self.max_eq_pixels = max_eq_pixels
+            self.bilateral_d = bilateral_d
+            self.bilateral_sigma_color = bilateral_sigma_color
+            self.bilateral_sigma_space = bilateral_sigma_space
+        except Exception as e:
+            logger.error(f"Error initializing ImagePreprocessor: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise
     
     def apply_histogram_equalization(self, img):
         """
@@ -114,19 +123,26 @@ class ImagePreprocessor:
         Returns:
             numpy.ndarray: Preprocessed image with enhanced quality
         """
-        # Apply histogram equalization if applicable
-        img = self.apply_histogram_equalization(img)
-        
-        # Enhance contrast using auto contrast adjustment
-        img = self.auto_contrast(img)
-        
-        # Apply bilateral filter for edge-preserving smoothing
-        img = cv2.bilateralFilter(img, 
-                                self.bilateral_d,
-                                self.bilateral_sigma_color,
-                                self.bilateral_sigma_space)
-        
-        # Apply the selected denoising method
-        img = self.apply_denoising(img)
-        
-        return img
+        try:
+            
+            if img is None:
+                raise ValueError("Input image is None")
+                
+            img = self.apply_histogram_equalization(img)
+            
+            img = self.auto_contrast(img)
+            
+            img = cv2.bilateralFilter(img, 
+                                    self.bilateral_d,
+                                    self.bilateral_sigma_color,
+                                    self.bilateral_sigma_space)
+            
+            img = self.apply_denoising(img)
+            
+            return img
+            
+        except Exception as e:
+            logger.error(f"Error in image preprocessing: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Image shape: {img.shape if img is not None else 'None'}")
+            raise

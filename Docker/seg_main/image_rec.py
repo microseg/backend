@@ -9,6 +9,10 @@ from sklearn.cluster import DBSCAN
 from sklearn.cluster import MeanShift
 from collections import Counter
 from scipy.spatial import cKDTree
+import logging
+import traceback
+
+logger = logging.getLogger()
 
 class GaussianModel:
     def __init__(self, weights, means, covariances):
@@ -151,10 +155,15 @@ class Identification:
             img_1d (ndarray): 1D representation of the image.
             label_1d (ndarray): 1D representation of the labels.
         """
-        self.img_1d = img_1d
-        self.label_1d = label_1d
-        self.unique_label = np.unique(self.label_1d)
-        self.data = np.array(self.all_gradient())
+        try:
+            self.img_1d = img_1d
+            self.label_1d = label_1d
+            self.unique_label = np.unique(self.label_1d)
+            self.data = np.array(self.all_gradient())
+        except Exception as e:
+            logger.error(f"Error initializing Identification: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise
 
     def config_feature(self, material):
         """
@@ -203,20 +212,31 @@ class Identification:
         Returns:
             ndarray: Predicted labels for the segments.
         """
-        data = self.data
-        sav_filename = f'model/{material}.sav'
-        loaded_model = pickle.load(open(sav_filename, 'rb'))
-        lab = self.label_1d.copy()
-        for i in range(len(data[0])):
-            x1 = data[0][i]
-            x2 = data[2][i]
-            x3 = data[4][i]
-            inputs = np.array([1, x1, x2, x3]).reshape(1, -1)
-            predicted_label = loaded_model.predict(inputs)
-            predicted_label_rounded = abs(np.round(predicted_label))
-            predicted_label_rounded = -1 if predicted_label_rounded == 0 else predicted_label_rounded
-            lab[self.label_1d == i] = predicted_label_rounded
-        return lab
+        try:
+            data = self.data
+            sav_filename = f'model/{material}.sav'
+            
+            try:
+                loaded_model = pickle.load(open(sav_filename, 'rb'))
+            except Exception as e:
+                logger.error(f"Failed to load model for material {material}: {str(e)}")
+                raise
+                
+            lab = self.label_1d.copy()
+            for i in range(len(data[0])):
+                x1 = data[0][i]
+                x2 = data[2][i]
+                x3 = data[4][i]
+                inputs = np.array([1, x1, x2, x3]).reshape(1, -1)
+                predicted_label = loaded_model.predict(inputs)
+                predicted_label_rounded = abs(np.round(predicted_label))
+                predicted_label_rounded = -1 if predicted_label_rounded == 0 else predicted_label_rounded
+                lab[self.label_1d == i] = predicted_label_rounded
+            return lab
+        except Exception as e:
+            logger.error(f"Error in test_feature for material {material}: {str(e)}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            raise
     
     def clean_huge_variance(self):
         """
@@ -367,13 +387,18 @@ def dbscan(resized_image, eps, min_samples):
             - numpy.ndarray: Labels assigned to each pixel in the flattened image.
             - numpy.ndarray: Unique labels for each cluster, excluding the -1 label for outliers.
     """
-    flat_image_rgb = resized_image.reshape(-1, 3) # Only use the RGB channels
-    dbscan = DBSCAN(eps=eps, min_samples=min_samples, algorithm='auto').fit(flat_image_rgb)
-    labels = dbscan.labels_
-    unique_labels = np.unique(labels)
-    unique_labels = unique_labels[unique_labels != -1]  # Exclude the -1 label for outliers
-    cluster_centers = [flat_image_rgb[labels == label].mean(axis=0) for label in unique_labels]
-    return cluster_centers, labels, unique_labels
+    try:
+        flat_image_rgb = resized_image.reshape(-1, 3)
+        dbscan = DBSCAN(eps=eps, min_samples=min_samples, algorithm='auto').fit(flat_image_rgb)
+        labels = dbscan.labels_
+        unique_labels = np.unique(labels)
+        unique_labels = unique_labels[unique_labels != -1]  # Exclude the -1 label for outliers
+        cluster_centers = [flat_image_rgb[labels == label].mean(axis=0) for label in unique_labels]
+        return cluster_centers, labels, unique_labels
+    except Exception as e:
+        logger.error(f"Error in DBSCAN clustering: {str(e)}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise
 
 def mean_shift(clusters, labels, unique_labels,show = False, bandwidth=10):
     """
