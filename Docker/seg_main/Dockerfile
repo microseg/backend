@@ -21,7 +21,7 @@ RUN dnf update -y && \
     && dnf clean all
 
 RUN pip install -r requirements.txt \
-    && pip install matplotlib
+    && pip install matplotlib && pip install psutil
 COPY . ${LAMBDA_TASK_ROOT}
 
 CMD ["lambda_function.lambda_handler"]

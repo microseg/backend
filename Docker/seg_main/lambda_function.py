@@ -10,9 +10,28 @@ from image_rec import *
 from matplotlib import cm
 from pre_utils import ImagePreprocessor
 
-# 配置日志记录器
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+def log_error_context(e, stage_name, **context):
+    """
+    Unified error logging function
+    """
+    error_context = {
+        'error_type': type(e).__name__,
+        'error_message': str(e),
+        'stage': stage_name,
+        'timestamp': datetime.now().isoformat(),
+        **context
+    }
+    
+    logger.error(f"Error occurred in stage: {stage_name}")
+    logger.error(f"Error type: {error_context['error_type']}")
+    logger.error(f"Error message: {error_context['error_message']}")
+    logger.error(f"Detailed context: {json.dumps(error_context, default=str)}")
+    logger.error(f"Stack trace: {traceback.format_exc()}")
+    
+    return error_context
 
 def get_image_from_s3(bucket_name, image_key):
     s3_client = boto3.client('s3')
@@ -24,58 +43,98 @@ def get_image_from_s3(bucket_name, image_key):
         nparr = np.frombuffer(image_content, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
+        if img is None:
+            raise ValueError("Image decoding failed")
+            
         return img
     except Exception as e:
-        error_msg = f"Error reading image from S3: bucket={bucket_name}, key={image_key}, error={str(e)}"
-        logger.error(error_msg)
-        logger.error(f"Traceback: {traceback.format_exc()}")
-        raise
+        error_context = log_error_context(e, 'S3 Image Reading', 
+            bucket_name=bucket_name,
+            image_key=image_key,
+            image_content_size=len(image_content) if 'image_content' in locals() else None
+        )
+        raise Exception(f"Failed to read image from S3: {str(e)}") from e
 
 def lambda_handler(event, context):
     start_time = datetime.now()
     request_id = context.aws_request_id
+    execution_context = {
+        'request_id': request_id,
+        'start_time': start_time.isoformat(),
+    }
     
     try:
-        if 'body' in event:
-            body = json.loads(event['body'])
-            bucket_name = body.get('bucket_name')
-            image_key = body.get('image_key')
-            material = body.get('material', 'Graphene')
-        else:
-            bucket_name = event.get('bucket_name')
-            image_key = event.get('image_key')
-            material = event.get('material', 'Graphene')
+        try:
+            if 'body' in event:
+                body = json.loads(event['body'])
+                bucket_name = body.get('bucket_name')
+                image_key = body.get('image_key')
+                material = body.get('material', 'Graphene')
+            else:
+                bucket_name = event.get('bucket_name')
+                image_key = event.get('image_key')
+                material = event.get('material', 'Graphene')
+                
+            execution_context.update({
+                'bucket_name': bucket_name,
+                'image_key': image_key,
+                'material': material
+            })
+        except Exception as e:
+            error_context = log_error_context(e, 'Parameter Parsing', 
+                event=event,
+                execution_context=execution_context
+            )
+            return {
+                'statusCode': 400,
+                'body': json.dumps({
+                    'error': 'Parameter parsing failed',
+                    'details': error_context,
+                    'request_id': request_id
+                })
+            }
             
         if not bucket_name or not image_key:
             error_msg = f"Missing required parameters. bucket_name: {bucket_name}, image_key: {image_key}"
             logger.error(error_msg)
             return {
                 'statusCode': 400,
-                'body': json.dumps({'error': error_msg})
+                'body': json.dumps({
+                    'error': error_msg,
+                    'request_id': request_id
+                })
             }
             
+        # 主处理流程
         img = get_image_from_s3(bucket_name, image_key)
+        execution_context['image_shape'] = img.shape if img is not None else None
+        
         segmenter = Material_seg(img, material)
         result = segmenter.merged_list()
         result_encoded = result.tolist()
+        
+        execution_time = (datetime.now() - start_time).total_seconds()
+        execution_context['execution_time'] = execution_time
         
         return {
             'statusCode': 200,
             'body': json.dumps({
                 'result': result_encoded,
                 'material': material,
-                'image_processed': image_key
+                'image_processed': image_key,
+                'execution_context': execution_context
             })
         }
         
     except Exception as e:
-        error_msg = f"Error processing image: {str(e)}"
-        logger.error(error_msg)
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        error_context = log_error_context(e, 'Main Processing', 
+            execution_context=execution_context
+        )
         return {
             'statusCode': 500,
             'body': json.dumps({
-                'error': error_msg,
+                'error': 'Processing failed',
+                'details': error_context,
                 'request_id': request_id
             })
         }
@@ -108,6 +167,12 @@ class Material_seg():
         Returns:
             ndarray: Segmented label results for the image.
         """
+        stage_context = {
+            'color_space': color_space,
+            'material': self.material,
+            'stage_timings': {}
+        }
+        
         try:
             # Stage 1: Image Preprocessing
             st_0 = time.time()
@@ -116,13 +181,17 @@ class Material_seg():
                 img = change_col_space(self.original_image, color_space) 
                 resized_image = reshape_image(img, 64)
                 flat_image = resized_image.reshape(-1, 3)
+                stage_context['preprocessing'] = {
+                    'original_shape': self.original_image.shape,
+                    'resized_shape': resized_image.shape
+                }
             except Exception as e:
-                logger.error(f"Error in preprocessing stage: {str(e)}")
-                logger.error(f"Image shape: {self.original_image.shape if self.original_image is not None else 'None'}")
-                logger.error(f"Color space: {color_space}")
-                logger.error(f"Traceback: {traceback.format_exc()}")
-                raise
-            t_0 = int((time.time()-st_0)*1000)
+                error_context = log_error_context(e, 'Preprocessing Stage', 
+                    stage_context=stage_context,
+                    image_shape=self.original_image.shape if self.original_image is not None else None
+                )
+                raise Exception(f"Preprocessing stage failed: {str(e)}") from e
+            stage_context['stage_timings']['preprocessing'] = int((time.time()-st_0)*1000)
 
             # Stage 2: Initial Clustering
             st_1 = time.time()
@@ -138,13 +207,16 @@ class Material_seg():
                     bandwidth=7
                 )
                 means = label_mean(flat_image, mean_shift_labels)
+                stage_context['clustering'] = {
+                    'dbscan_clusters': len(cluster_centers) if cluster_centers is not None else 0,
+                    'mean_shift_clusters': len(mean_shift_cluster_centers) if mean_shift_cluster_centers is not None else 0
+                }
             except Exception as e:
-                logger.error(f"Error in initial clustering stage: {str(e)}")
-                logger.error(f"DBSCAN results - clusters: {len(cluster_centers) if cluster_centers is not None else 'None'}")
-                logger.error(f"Mean shift input shape: {cluster_centers.shape if cluster_centers is not None else 'None'}")
-                logger.error(f"Traceback: {traceback.format_exc()}")
-                raise
-            t_1 = int((time.time()-st_1)*1000)
+                error_context = log_error_context(e, 'Initial Clustering', 
+                    stage_context=stage_context
+                )
+                raise Exception(f"Initial clustering stage failed: {str(e)}") from e
+            stage_context['stage_timings']['initial_clustering'] = int((time.time()-st_1)*1000)
 
             # Stage 3: Fine Clustering
             st_2 = time.time()
@@ -158,12 +230,11 @@ class Material_seg():
                     
                 final_label = get_common_clusters(final_label, resized_image, n_clusters=3)
             except Exception as e:
-                logger.error(f"Error in fine clustering stage: {str(e)}")
-                logger.error(f"Resized image shape: {resized_image.shape if resized_image is not None else 'None'}")
-                logger.error(f"Number of means: {len(means) if means is not None else 'None'}")
-                logger.error(f"Traceback: {traceback.format_exc()}")
-                raise
-            t_2 = int((time.time()-st_2)*1000)
+                error_context = log_error_context(e, 'Fine Clustering Stage', 
+                    stage_context=stage_context
+                )
+                raise Exception(f"Fine clustering stage failed: {str(e)}") from e
+            stage_context['stage_timings']['fine_clustering'] = int((time.time()-st_2)*1000)
 
             # Stage 4: Image Reconstruction
             st_3 = time.time()
@@ -175,12 +246,11 @@ class Material_seg():
                 rec_img = (self.original_img_backup_resized).reshape(-1, (self.original_img_backup_resized).shape[-1])
                 re_cluster_px = Identification(rec_img, final_label).clean_huge_variance()
             except Exception as e:
-                logger.error(f"Error in image reconstruction stage: {str(e)}")
-                logger.error(f"Original backup image shape: {self.original_image_backup.shape if self.original_image_backup is not None else 'None'}")
-                logger.error(f"Final label shape: {final_label.shape if final_label is not None else 'None'}")
-                logger.error(f"Traceback: {traceback.format_exc()}")
-                raise
-            t_3 = int((time.time()-st_3)*1000)
+                error_context = log_error_context(e, 'Image Reconstruction Stage', 
+                    stage_context=stage_context
+                )
+                raise Exception(f"Image reconstruction stage failed: {str(e)}") from e
+            stage_context['stage_timings']['image_reconstruction'] = int((time.time()-st_3)*1000)
 
             # Stage 5: Material Feature Testing
             st_4 = time.time()
@@ -189,23 +259,19 @@ class Material_seg():
                 if label is None:
                     raise ValueError(f"Feature testing failed for material: {self.material}")
             except Exception as e:
-                logger.error(f"Error in material feature testing stage: {str(e)}")
-                logger.error(f"Material type: {self.material}")
-                logger.error(f"Input image shape: {rec_img.shape if rec_img is not None else 'None'}")
-                logger.error(f"Cluster pixels shape: {re_cluster_px.shape if re_cluster_px is not None else 'None'}")
-                logger.error(f"Traceback: {traceback.format_exc()}")
-                raise
-            t_4 = int((time.time()-st_4)*1000)
+                error_context = log_error_context(e, 'Material Feature Testing Stage', 
+                    stage_context=stage_context
+                )
+                raise Exception(f"Material feature testing stage failed: {str(e)}") from e
+            stage_context['stage_timings']['material_feature_testing'] = int((time.time()-st_4)*1000)
 
             return label
 
         except Exception as e:
-            logger.error(f"Fatal error in single_process: {str(e)}")
-            logger.error(f"Material: {self.material}")
-            logger.error(f"Color space: {color_space}")
-            logger.error(f"Original image shape: {self.original_image.shape if self.original_image is not None else 'None'}")
-            logger.error(f"Traceback: {traceback.format_exc()}")
-            raise
+            error_context = log_error_context(e, 'Single Process Overall', 
+                stage_context=stage_context
+            )
+            raise Exception(f"Image processing failed: {str(e)}") from e
 
     def merged_list(self):
         """
