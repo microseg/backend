@@ -1,0 +1,14 @@
+{
+  "name": "auth-login-handler",
+  "version": "1.0.0",
+  "description": "Lambda function for handling user login",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.0.0"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC"
+} 
