@@ -1,0 +1,18 @@
+{
+  "name": "auth-password-handler",
+  "version": "1.0.0",
+  "description": "AWS Lambda handler for password reset functionality",
+  "main": "index.js",
+  "dependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.29.0"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "package": "zip -r auth-password-handler.zip index.js package.json src/",
+    "package:win": "powershell Compress-Archive -Path index.js,package.json,src -DestinationPath auth-password-handler.zip -Force",
+    "deploy:dev": "npm run package && aws lambda update-function-code --function-name auth-password-handler-dev --zip-file fileb://auth-password-handler.zip",
+    "deploy:prod": "npm run package && aws lambda update-function-code --function-name auth-password-handler-prod --zip-file fileb://auth-password-handler.zip"
+  },
+  "author": "Matsight",
+  "license": "ISC"
+} 

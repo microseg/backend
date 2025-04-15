@@ -40,7 +40,11 @@ class AuthService {
 
       // Handle specific error types
       if (error.name === 'UserNotConfirmedException') {
-        throw new Error('Your account needs email verification. Please verify your email first');
+        const customError = new Error('Your account email is not verified. Please verify your email before logging in.');
+        customError.statusCode = 403;
+        customError.code = 'EMAIL_NOT_VERIFIED';
+        customError.username = username;
+        throw customError;
       } else if (error.name === 'NotAuthorizedException') {
         throw new Error('Incorrect email or password');
       } else if (error.name === 'UserNotFoundException') {

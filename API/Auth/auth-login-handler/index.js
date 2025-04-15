@@ -45,6 +45,19 @@ exports.handler = async (event) => {
     console.error('Login error:', error);
     console.error('Error stack:', error.stack);
     
+    // Special handling for email not verified case
+    if (error.code === 'EMAIL_NOT_VERIFIED') {
+      console.log('User email not verified:', error.username);
+      return ResponseBuilder.error(
+        error.message,
+        error.statusCode,
+        {
+          code: error.code,
+          username: error.username
+        }
+      );
+    }
+    
     // Return appropriate error response
     return ResponseBuilder.error(
       error.message || 'An error occurred during login',
