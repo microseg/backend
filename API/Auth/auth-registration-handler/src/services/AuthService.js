@@ -1,13 +1,17 @@
 const { CognitoClient } = require('../utils/CognitoClient');
+const { UserLambdaClient } = require('../utils/LambdaClient');
 
 class AuthService {
     constructor(stage = 'dev') {
         this.cognitoClient = new CognitoClient(stage);
+        this.lambdaClient = new UserLambdaClient(stage);
+        this.stage = stage; // Store stage for later use
     }
 
     async register(email, username, password) {
         try {
             console.log('Starting registration process for email:', email);
+            console.log('Current stage:', this.stage);
             
             // Validate input
             if (!email || !username || !password) {
@@ -42,6 +46,28 @@ class AuthService {
             try {
                 const signUpResult = await this.cognitoClient.signUp(email, username, password);
                 console.log('User registered in Cognito:', signUpResult.UserSub);
+
+                // Only call the user creation Lambda if the stage is 'prod'
+                if (this.stage === 'prod') {
+                    try {
+                        console.log('Stage is prod, calling user creation Lambda');
+                        // Set the target Lambda ARN (defaults to getting from environment variables)
+                        process.env.TARGET_LAMBDA_ARN = 'arn:aws:lambda:us-east-1:043309364810:function:NewFolder:prod';
+                        
+                        // Get the target Lambda function name from environment variables, default to user-creation-handler
+                        const targetFunction = process.env.USER_CREATION_LAMBDA || 'user-creation-handler';
+                        
+                        await this.lambdaClient.invokeLambda(targetFunction, {
+                            user_id: signUpResult.UserSub
+                        });
+                        console.log(`Successfully called Lambda with user_id:`, signUpResult.UserSub);
+                    } catch (lambdaError) {
+                        // If Lambda call fails, log the error but don't affect the registration process
+                        console.error('Error calling Lambda function:', lambdaError);
+                    }
+                } else {
+                    console.log(`Stage is ${this.stage}, skipping user creation Lambda call`);
+                }
 
                 return {
                     message: 'Registration successful. Please check your email for verification code.',

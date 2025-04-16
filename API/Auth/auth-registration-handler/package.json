@@ -4,6 +4,7 @@
   "description": "AWS Lambda handler for user registration, email verification and resend verification",
   "main": "index.js",
   "dependencies": {
-    "@aws-sdk/client-cognito-identity-provider": "^3.0.0"
+    "@aws-sdk/client-cognito-identity-provider": "^3.0.0",
+    "@aws-sdk/client-lambda": "^3.0.0"
   }
 } 
