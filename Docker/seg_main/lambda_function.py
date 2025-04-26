@@ -56,13 +56,19 @@ def lambda_handler(event, context):
             
         img = get_image_from_s3(bucket_name, image_key)
         segmenter = Material_seg(img, material)
-        result = segmenter.merged_list()
-        result_encoded = result.tolist()
+        
+        # 这里获取分割图像和标签映射
+        result_img, result_label = segmenter.merged_list_with_label()
+        
+        # 将两个结果都转换为可JSON序列化的格式
+        result_img_encoded = result_img.tolist()
+        result_label_encoded = result_label.tolist()
         
         return {
             'statusCode': 200,
             'body': json.dumps({
-                'result': result_encoded,
+                'result_img': result_img_encoded,
+                'result_label': result_label_encoded,
                 'material': material,
                 'image_processed': image_key
             })
@@ -231,6 +237,34 @@ class Material_seg():
             final_label_img[final_label_2D == label] = color
         final_label_img[final_label_2D == -1] = [0, 0, 0]
         return final_label_img
+        
+    def merged_list_with_label(self):
+        """
+        Processes the image using the RGB color space and returns both the segmented image and the label map.
+        
+        Returns:
+            tuple: 
+                - ndarray: Segmented image with color mapping
+                - ndarray: 2D label map with integer labels
+        """
+        label = self.single_process("RGB")
+        dst = clean_huge_area(label, self.original_img_backup_resized)
+        final_label_2D = dst.reshape(self.original_img_backup_resized.shape[:2])
+        design = "viridis"
+        cmap = cm.get_cmap(design)
+
+        # Create color mapping for labels
+        unique_labels = np.unique(final_label_2D)
+        normalized_labels = (unique_labels - np.min(unique_labels)) / (np.max(unique_labels) - np.min(unique_labels))
+        color_map = {label: (np.array(cmap(norm_label)[:3]) * 255).astype(int) for label, norm_label in zip(unique_labels, normalized_labels) if label != -1}
+
+        # Create final_label image
+        final_label_img = np.zeros_like(self.original_img_backup_resized)
+        for label, color in color_map.items():
+            final_label_img[final_label_2D == label] = color
+        final_label_img[final_label_2D == -1] = [0, 0, 0]
+        
+        return final_label_img, final_label_2D
     
 def change_col_space(img, color_space):
     # img = green_channel(img)
@@ -248,25 +282,21 @@ def reshape_image(img, short_edge_length):
     Function to reshape image base on the short edge length
     
     Args:
-        img (ndarray): The image to be reshaped.
-        short_edge_length (int): The number of pixels for the shortest edge.
-
+        img (ndarray): Input image.
+        short_edge_length (int): Target short edge length.
+        
     Returns:
-        resized_img (ndarray): The reshaped image.
+        ndarray: Resized image.
     '''
-    height, width = img.shape[:2]
-
-    # Identify the short edge and calculate scale
-    if height < width:
-        scale = short_edge_length / height
-        new_height = short_edge_length
-        new_width = int(scale * width)
+    h, w = img.shape[:2]
+    if min(h, w) == short_edge_length:
+        return img
+    if h < w:
+        new_h = short_edge_length
+        new_w = int(w * (short_edge_length / h))
     else:
-        scale = short_edge_length / width
-        new_width = short_edge_length
-        new_height = int(scale * height)
-
-    # Resize the image
-    resized_img = cv2.resize(img, (new_width, new_height), interpolation = cv2.INTER_LINEAR)
-    return resized_img
+        new_w = short_edge_length
+        new_h = int(h * (short_edge_length / w))
+    img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    return img
     
