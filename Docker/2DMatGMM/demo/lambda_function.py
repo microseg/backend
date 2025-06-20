@@ -88,16 +88,13 @@ class S3Handler:
             Tuple[str, str]: (JSON key in S3, Image key in S3)
         """
         try:
-            # 从image_key中获取用户文件夹路径
-            user_folder = os.path.dirname(image_key)  # 例如: users/user-uuid
-            base_name = os.path.splitext(os.path.basename(image_key))[0]  # 例如: Graphene_27
+            user_folder = os.path.dirname(image_key)  # Example: users/user-uuid
+            base_name = os.path.splitext(os.path.basename(image_key))[0]  # Example: Graphene_27
             
-            # 构建结果路径
-            results_folder = f"{user_folder}/__results"  # 例如: users/user-uuid/__results
+            results_folder = f"{user_folder}/__results"  # Example: users/user-uuid/__results
             json_key = f"{results_folder}/{base_name}_results.json"
             image_key = f"{results_folder}/{base_name}_processed.jpg"
             
-            # 保存JSON结果
             json_bytes = json.dumps(results, indent=2).encode('utf-8')
             self.s3_client.put_object(
                 Bucket=bucket_name,
@@ -106,7 +103,6 @@ class S3Handler:
                 ContentType='application/json'
             )
             
-            # 保存处理后的图片
             _, img_encoded = cv2.imencode('.jpg', image)
             self.s3_client.put_object(
                 Bucket=bucket_name,
