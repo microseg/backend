@@ -1,1 +1,0 @@
-from .Detector import MaterialDetector
